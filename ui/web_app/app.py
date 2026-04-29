@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_PATH = BASE_DIR / "data" / "Processed_AmazonData.csv"
+DATA_PATH = BASE_DIR / "Processed_AmazonData.csv"
 DB_PATH = BASE_DIR / "ui" / "web_app" / "cloud_web.db"
 
 st.set_page_config(
