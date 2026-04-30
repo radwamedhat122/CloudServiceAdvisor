@@ -5,9 +5,11 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_PATH = BASE_DIR / "Processed_AmazonData.csv"
-DB_PATH = BASE_DIR / "ui" / "web_app" / "cloud_web.db"
+DATA_PATH = BASE_DIR / "data" / "Processed_MultiCloud.csv"
+DB_PATH = Path(__file__).resolve().parent / "cloud_web_multicloud.db"
+
 
 st.set_page_config(
     page_title="Cloud Service Advisor",
@@ -47,10 +49,16 @@ def init_database():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_name TEXT NOT NULL,
         app_type TEXT NOT NULL,
-        budget REAL NOT NULL,
-        storage_type TEXT NOT NULL,
-        need_ai INTEGER NOT NULL DEFAULT 0,
-        need_database INTEGER NOT NULL DEFAULT 0,
+        budget TEXT,
+        expected_users TEXT,
+        storage_type TEXT,
+        security_level TEXT,
+        need_ai TEXT,
+        need_ml TEXT,
+        need_serverless TEXT,
+        need_vm TEXT,
+        need_database TEXT,
+        need_backup TEXT,
         created_by INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(created_by) REFERENCES users(id)
@@ -63,9 +71,13 @@ def init_database():
         project_id INTEGER NOT NULL,
         provider TEXT,
         service_model TEXT,
-        compute_service TEXT,
-        storage_service TEXT,
-        estimated_cost TEXT,
+        service_type TEXT,
+        service_id TEXT,
+        edge_node_id TEXT,
+        qos_score TEXT,
+        response_time TEXT,
+        service_latency TEXT,
+        throughput TEXT,
         dataset_summary TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -139,45 +151,78 @@ def load_dataset():
     df = pd.read_csv(DATA_PATH)
 
     required_columns = [
+        "Service ID",
         "Provider",
+        "Service Type",
         "Service Model",
-        "Instance Type",
-        "Instance Family",
-        "vCPU",
-        "Memory",
-        "Storage",
-        "Location",
-        "Operating System",
-        "Network Performance",
-        "PricePerUnit"
+        "Edge Node ID",
+        "CPU Utilization",
+        "Memory Usage",
+        "Storage Usage",
+        "Network Bandwidth",
+        "Service Latency",
+        "Response Time",
+        "Throughput",
+        "Load Balancing",
+        "QoS Score",
+        "Workload Variability",
+        "Optimal Service Placement"
     ]
 
-    missing_columns = [col for col in required_columns if col not in df.columns]
+    missing_columns = [column for column in required_columns if column not in df.columns]
 
     if missing_columns:
         raise ValueError(
-            "Missing columns in Processed_AmazonData.csv: "
+            "Missing columns in Processed_MultiCloud.csv: "
             + ", ".join(missing_columns)
         )
 
-    df["PricePerUnit"] = pd.to_numeric(df["PricePerUnit"], errors="coerce")
-    df["vCPU"] = pd.to_numeric(df["vCPU"], errors="coerce")
-    df["Memory"] = pd.to_numeric(df["Memory"], errors="coerce")
+    numeric_columns = [
+        "CPU Utilization",
+        "Memory Usage",
+        "Storage Usage",
+        "Network Bandwidth",
+        "Service Latency",
+        "Response Time",
+        "Throughput",
+        "Load Balancing",
+        "QoS Score",
+        "Workload Variability",
+        "Optimal Service Placement"
+    ]
+
+    for column in numeric_columns:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df = df.dropna(subset=[
+        "Service ID",
         "Provider",
+        "Service Type",
         "Service Model",
-        "Instance Type",
-        "Instance Family",
-        "vCPU",
-        "Memory",
-        "PricePerUnit"
+        "QoS Score",
+        "Service Latency",
+        "Response Time",
+        "Throughput"
     ])
 
     return df
 
 
-def add_project(project_name, app_type, budget, storage_type, need_ai, need_database, user_id):
+def add_project(
+    project_name,
+    app_type,
+    budget,
+    expected_users,
+    storage_type,
+    security_level,
+    need_ai,
+    need_ml,
+    need_serverless,
+    need_vm,
+    need_database,
+    need_backup,
+    user_id
+):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -186,19 +231,31 @@ def add_project(project_name, app_type, budget, storage_type, need_ai, need_data
         project_name,
         app_type,
         budget,
+        expected_users,
         storage_type,
+        security_level,
         need_ai,
+        need_ml,
+        need_serverless,
+        need_vm,
         need_database,
+        need_backup,
         created_by
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         project_name,
         app_type,
         budget,
+        expected_users,
         storage_type,
-        1 if need_ai else 0,
-        1 if need_database else 0,
+        security_level,
+        "Yes" if need_ai else "No",
+        "Yes" if need_ml else "No",
+        "Yes" if need_serverless else "No",
+        "Yes" if need_vm else "No",
+        "Yes" if need_database else "No",
+        "Yes" if need_backup else "No",
         user_id
     ))
 
@@ -243,72 +300,52 @@ def get_project_by_id(project_id, user_id):
     return dict(row)
 
 
+def get_needed_service_types(project):
+    needed_types = []
+
+    if project["need_ai"] == "Yes" or project["need_ml"] == "Yes":
+        needed_types.append("AI Model")
+
+    if project["need_database"] == "Yes":
+        needed_types.append("Database")
+
+    if project["need_vm"] == "Yes" or project["need_serverless"] == "Yes":
+        needed_types.append("Compute")
+
+    if project["storage_type"] in ["Block", "Object", "File"]:
+        needed_types.append("Storage")
+
+    if not needed_types:
+        needed_types.append("Compute")
+
+    return needed_types
+
+
 def filter_dataset_by_project(df, project):
     filtered = df.copy()
 
-    budget_filtered = filtered[filtered["PricePerUnit"] <= float(project["budget"])]
+    needed_service_types = get_needed_service_types(project)
 
-    if not budget_filtered.empty:
-        filtered = budget_filtered
+    service_filtered = filtered[
+        filtered["Service Type"].astype(str).isin(needed_service_types)
+    ]
 
-    storage_type = str(project["storage_type"]).lower()
-    storage_column = filtered["Storage"].astype(str).str.lower()
-
-    if storage_type == "block":
-        storage_filtered = filtered[
-            storage_column.str.contains("ebs", na=False)
-            | storage_column.str.contains("ssd", na=False)
-            | storage_column.str.contains("nvme", na=False)
-        ]
-
-        if not storage_filtered.empty:
-            filtered = storage_filtered
-
-    elif storage_type == "object":
-        storage_filtered = filtered[
-            storage_column.str.contains("storage", na=False)
-            | storage_column.str.contains("hdd", na=False)
-            | storage_column.str.contains("ssd", na=False)
-            | storage_column.str.contains("ebs", na=False)
-        ]
-
-        if not storage_filtered.empty:
-            filtered = storage_filtered
-
-    elif storage_type == "file":
-        storage_filtered = filtered[
-            storage_column.str.contains("file", na=False)
-            | storage_column.str.contains("efs", na=False)
-            | storage_column.str.contains("ebs", na=False)
-        ]
-
-        if not storage_filtered.empty:
-            filtered = storage_filtered
-
-    family_column = filtered["Instance Family"].astype(str).str.lower()
-
-    if project["need_ai"]:
-        ai_filtered = filtered[
-            family_column.str.contains("gpu", na=False)
-            | family_column.str.contains("compute", na=False)
-            | family_column.str.contains("accelerated", na=False)
-        ]
-
-        if not ai_filtered.empty:
-            filtered = ai_filtered
-
-    if project["need_database"]:
-        database_filtered = filtered[
-            family_column.str.contains("memory", na=False)
-            | family_column.str.contains("general", na=False)
-        ]
-
-        if not database_filtered.empty:
-            filtered = database_filtered
+    if not service_filtered.empty:
+        filtered = service_filtered
 
     filtered = filtered.sort_values(
-        by=["PricePerUnit", "vCPU", "Memory"],
-        ascending=[True, False, False]
+        by=[
+            "QoS Score",
+            "Service Latency",
+            "Response Time",
+            "Throughput"
+        ],
+        ascending=[
+            False,
+            True,
+            True,
+            False
+        ]
     )
 
     return filtered
@@ -318,33 +355,42 @@ def generate_recommendation(project):
     df = load_dataset()
 
     if df is None:
-        return False, "Processed dataset file not found. Please add data/Processed_AmazonData.csv.", None
+        return False, "Processed_MultiCloud.csv was not found.", None
 
     filtered = filter_dataset_by_project(df, project)
 
     if filtered.empty:
-        return False, "No matching row found in the processed dataset.", None
+        return False, "No matching service was found in the processed dataset.", None
 
     selected = filtered.iloc[0]
 
     result = {
         "provider": str(selected["Provider"]),
         "service_model": str(selected["Service Model"]),
-        "compute_service": str(selected["Instance Type"]),
-        "storage_service": str(selected["Storage"]),
-        "estimated_cost": str(selected["PricePerUnit"]),
+        "service_type": str(selected["Service Type"]),
+        "service_id": str(selected["Service ID"]),
+        "edge_node_id": str(selected["Edge Node ID"]),
+        "qos_score": str(selected["QoS Score"]),
+        "response_time": str(selected["Response Time"]),
+        "service_latency": str(selected["Service Latency"]),
+        "throughput": str(selected["Throughput"]),
         "dataset_summary": (
+            f"Service ID: {selected['Service ID']} | "
             f"Provider: {selected['Provider']} | "
+            f"Service Type: {selected['Service Type']} | "
             f"Service Model: {selected['Service Model']} | "
-            f"Instance Type: {selected['Instance Type']} | "
-            f"Instance Family: {selected['Instance Family']} | "
-            f"vCPU: {selected['vCPU']} | "
-            f"Memory: {selected['Memory']} GiB | "
-            f"Storage: {selected['Storage']} | "
-            f"Location: {selected['Location']} | "
-            f"Operating System: {selected['Operating System']} | "
-            f"Network Performance: {selected['Network Performance']} | "
-            f"Price Per Unit: {selected['PricePerUnit']}"
+            f"Edge Node: {selected['Edge Node ID']} | "
+            f"CPU Utilization: {selected['CPU Utilization']} | "
+            f"Memory Usage: {selected['Memory Usage']} | "
+            f"Storage Usage: {selected['Storage Usage']} | "
+            f"Network Bandwidth: {selected['Network Bandwidth']} | "
+            f"Service Latency: {selected['Service Latency']} | "
+            f"Response Time: {selected['Response Time']} | "
+            f"Throughput: {selected['Throughput']} | "
+            f"QoS Score: {selected['QoS Score']} | "
+            f"Load Balancing: {selected['Load Balancing']} | "
+            f"Workload Variability: {selected['Workload Variability']} | "
+            f"Optimal Service Placement: {selected['Optimal Service Placement']}"
         )
     }
 
@@ -356,26 +402,34 @@ def generate_recommendation(project):
         project_id,
         provider,
         service_model,
-        compute_service,
-        storage_service,
-        estimated_cost,
+        service_type,
+        service_id,
+        edge_node_id,
+        qos_score,
+        response_time,
+        service_latency,
+        throughput,
         dataset_summary
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         project["id"],
         result["provider"],
         result["service_model"],
-        result["compute_service"],
-        result["storage_service"],
-        result["estimated_cost"],
+        result["service_type"],
+        result["service_id"],
+        result["edge_node_id"],
+        result["qos_score"],
+        result["response_time"],
+        result["service_latency"],
+        result["throughput"],
         result["dataset_summary"]
     ))
 
     conn.commit()
     conn.close()
 
-    return True, "Recommendation generated successfully.", result
+    return True, "Recommendation generated successfully from the processed Kaggle dataset.", result
 
 
 def get_my_recommendations(user_id):
@@ -388,9 +442,10 @@ def get_my_recommendations(user_id):
         p.project_name,
         r.provider,
         r.service_model,
-        r.compute_service,
-        r.storage_service,
-        r.estimated_cost,
+        r.service_type,
+        r.service_id,
+        r.qos_score,
+        r.response_time,
         r.created_at
     FROM recommendations r
     INNER JOIN projects p ON r.project_id = p.id
@@ -406,7 +461,6 @@ def get_my_recommendations(user_id):
 
 def logout():
     st.session_state["user"] = None
-    st.session_state["page"] = "login"
     st.rerun()
 
 
@@ -430,7 +484,6 @@ def show_login_page():
 
             if success:
                 st.session_state["user"] = result
-                st.session_state["page"] = "dashboard"
                 st.rerun()
             else:
                 st.error(result)
@@ -494,14 +547,46 @@ def show_dashboard():
             st.subheader("Add New Project")
 
             project_name = st.text_input("Project Name")
+
             app_type = st.selectbox(
                 "Application Type",
-                ["Web Application", "Mobile Application", "Enterprise System", "Other"]
+                [
+                    "Web Application",
+                    "Mobile Application",
+                    "Enterprise System",
+                    "AI Application",
+                    "Data System",
+                    "Other"
+                ]
             )
-            budget = st.number_input("Budget", min_value=0.0, step=1.0)
-            storage_type = st.selectbox("Storage Type", ["Block", "Object", "File"])
-            need_ai = st.checkbox("Need AI / ML")
+
+            budget = st.text_input("Budget")
+            expected_users = st.text_input("Expected Users")
+
+            storage_type = st.selectbox(
+                "Storage Type",
+                [
+                    "Block",
+                    "Object",
+                    "File"
+                ]
+            )
+
+            security_level = st.selectbox(
+                "Security Level",
+                [
+                    "Low",
+                    "Medium",
+                    "High"
+                ]
+            )
+
+            need_ai = st.checkbox("Need AI")
+            need_ml = st.checkbox("Need Machine Learning")
+            need_serverless = st.checkbox("Need Serverless")
+            need_vm = st.checkbox("Need VM")
             need_database = st.checkbox("Need Database")
+            need_backup = st.checkbox("Need Backup")
 
             submitted = st.form_submit_button("Add Project")
 
@@ -513,9 +598,15 @@ def show_dashboard():
                         project_name,
                         app_type,
                         budget,
+                        expected_users,
                         storage_type,
+                        security_level,
                         need_ai,
+                        need_ml,
+                        need_serverless,
+                        need_vm,
                         need_database,
+                        need_backup,
                         user["id"]
                     )
                     st.success("Project added successfully.")
@@ -561,9 +652,13 @@ def show_dashboard():
                 st.subheader("Recommendation Result")
                 st.write(f"**Provider:** {result['provider']}")
                 st.write(f"**Service Model:** {result['service_model']}")
-                st.write(f"**Compute Service:** {result['compute_service']}")
-                st.write(f"**Storage Service:** {result['storage_service']}")
-                st.write(f"**Estimated Cost:** {result['estimated_cost']}")
+                st.write(f"**Service Type:** {result['service_type']}")
+                st.write(f"**Service ID:** {result['service_id']}")
+                st.write(f"**Edge Node ID:** {result['edge_node_id']}")
+                st.write(f"**QoS Score:** {result['qos_score']}")
+                st.write(f"**Service Latency:** {result['service_latency']}")
+                st.write(f"**Response Time:** {result['response_time']}")
+                st.write(f"**Throughput:** {result['throughput']}")
                 st.write(f"**Dataset Match:** {result['dataset_summary']}")
             else:
                 st.error(message)
@@ -581,9 +676,6 @@ init_database()
 
 if "user" not in st.session_state:
     st.session_state["user"] = None
-
-if "page" not in st.session_state:
-    st.session_state["page"] = "login"
 
 if st.session_state["user"] is None:
     show_login_page()
