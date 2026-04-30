@@ -7,7 +7,12 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_PATH = BASE_DIR / "Processed_MultiCloud.csv"
+
+DATA_PATH_OPTIONS = [
+    BASE_DIR / "data" / "Processed_MultiCloud.csv",
+    BASE_DIR / "Processed_MultiCloud.csv"
+]
+
 DB_PATH = Path(__file__).resolve().parent / "cloud_web_multicloud.db"
 
 
@@ -16,6 +21,17 @@ st.set_page_config(
     page_icon="☁️",
     layout="wide"
 )
+
+
+def get_data_path():
+    for path in DATA_PATH_OPTIONS:
+        if path.exists():
+            return path
+
+    return DATA_PATH_OPTIONS[0]
+
+
+DATA_PATH = get_data_path()
 
 
 def get_connection():
@@ -49,6 +65,8 @@ def init_database():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_name TEXT NOT NULL,
         app_type TEXT NOT NULL,
+        main_service_type TEXT,
+        optimization_goal TEXT,
         budget TEXT,
         expected_users TEXT,
         storage_type TEXT,
@@ -83,6 +101,30 @@ def init_database():
         FOREIGN KEY(project_id) REFERENCES projects(id)
     )
     """)
+
+    cursor.execute("PRAGMA table_info(projects)")
+    existing_project_columns = [column[1] for column in cursor.fetchall()]
+
+    required_project_columns = {
+        "main_service_type": "TEXT",
+        "optimization_goal": "TEXT",
+        "budget": "TEXT",
+        "expected_users": "TEXT",
+        "storage_type": "TEXT",
+        "security_level": "TEXT",
+        "need_ai": "TEXT",
+        "need_ml": "TEXT",
+        "need_serverless": "TEXT",
+        "need_vm": "TEXT",
+        "need_database": "TEXT",
+        "need_backup": "TEXT"
+    }
+
+    for column_name, column_type in required_project_columns.items():
+        if column_name not in existing_project_columns:
+            cursor.execute(
+                f"ALTER TABLE projects ADD COLUMN {column_name} {column_type}"
+            )
 
     conn.commit()
     conn.close()
@@ -169,7 +211,10 @@ def load_dataset():
         "Optimal Service Placement"
     ]
 
-    missing_columns = [column for column in required_columns if column not in df.columns]
+    missing_columns = [
+        column for column in required_columns
+        if column not in df.columns
+    ]
 
     if missing_columns:
         raise ValueError(
@@ -202,7 +247,8 @@ def load_dataset():
         "QoS Score",
         "Service Latency",
         "Response Time",
-        "Throughput"
+        "Throughput",
+        "Load Balancing"
     ])
 
     return df
@@ -211,6 +257,8 @@ def load_dataset():
 def add_project(
     project_name,
     app_type,
+    main_service_type,
+    optimization_goal,
     budget,
     expected_users,
     storage_type,
@@ -230,6 +278,8 @@ def add_project(
     INSERT INTO projects (
         project_name,
         app_type,
+        main_service_type,
+        optimization_goal,
         budget,
         expected_users,
         storage_type,
@@ -242,10 +292,12 @@ def add_project(
         need_backup,
         created_by
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         project_name,
         app_type,
+        main_service_type,
+        optimization_goal,
         budget,
         expected_users,
         storage_type,
@@ -300,53 +352,51 @@ def get_project_by_id(project_id, user_id):
     return dict(row)
 
 
-def get_needed_service_types(project):
-    needed_types = []
-
-    if project["need_ai"] == "Yes" or project["need_ml"] == "Yes":
-        needed_types.append("AI Model")
-
-    if project["need_database"] == "Yes":
-        needed_types.append("Database")
-
-    if project["need_vm"] == "Yes" or project["need_serverless"] == "Yes":
-        needed_types.append("Compute")
-
-    if project["storage_type"] in ["Block", "Object", "File"]:
-        needed_types.append("Storage")
-
-    if not needed_types:
-        needed_types.append("Compute")
-
-    return needed_types
-
-
 def filter_dataset_by_project(df, project):
     filtered = df.copy()
 
-    needed_service_types = get_needed_service_types(project)
+    main_service_type = str(project.get("main_service_type", "")).strip()
 
-    service_filtered = filtered[
-        filtered["Service Type"].astype(str).isin(needed_service_types)
-    ]
-
-    if not service_filtered.empty:
-        filtered = service_filtered
-
-    filtered = filtered.sort_values(
-        by=[
-            "QoS Score",
-            "Service Latency",
-            "Response Time",
-            "Throughput"
-        ],
-        ascending=[
-            False,
-            True,
-            True,
-            False
+    if main_service_type:
+        service_filtered = filtered[
+            filtered["Service Type"].astype(str).str.lower()
+            == main_service_type.lower()
         ]
-    )
+
+        if not service_filtered.empty:
+            filtered = service_filtered
+
+    optimization_goal = str(project.get("optimization_goal", "")).strip()
+
+    if optimization_goal == "Lowest Latency":
+        filtered = filtered.sort_values(
+            by=["Service Latency"],
+            ascending=[True]
+        )
+
+    elif optimization_goal == "Fastest Response":
+        filtered = filtered.sort_values(
+            by=["Response Time"],
+            ascending=[True]
+        )
+
+    elif optimization_goal == "Highest Throughput":
+        filtered = filtered.sort_values(
+            by=["Throughput"],
+            ascending=[False]
+        )
+
+    elif optimization_goal == "Best Load Balancing":
+        filtered = filtered.sort_values(
+            by=["Load Balancing"],
+            ascending=[False]
+        )
+
+    else:
+        filtered = filtered.sort_values(
+            by=["QoS Score"],
+            ascending=[False]
+        )
 
     return filtered
 
@@ -506,7 +556,12 @@ def show_login_page():
                 st.error("Passwords do not match.")
                 return
 
-            success, message = register_user(full_name, username, email, new_password)
+            success, message = register_user(
+                full_name,
+                username,
+                email,
+                new_password
+            )
 
             if success:
                 st.success(message)
@@ -560,6 +615,28 @@ def show_dashboard():
                 ]
             )
 
+            main_service_type = st.selectbox(
+                "Main Required Service",
+                [
+                    "Compute",
+                    "Storage",
+                    "Database",
+                    "AI Model",
+                    "Network"
+                ]
+            )
+
+            optimization_goal = st.selectbox(
+                "Optimization Goal",
+                [
+                    "Best QoS",
+                    "Lowest Latency",
+                    "Fastest Response",
+                    "Highest Throughput",
+                    "Best Load Balancing"
+                ]
+            )
+
             budget = st.text_input("Budget")
             expected_users = st.text_input("Expected Users")
 
@@ -597,6 +674,8 @@ def show_dashboard():
                     add_project(
                         project_name,
                         app_type,
+                        main_service_type,
+                        optimization_goal,
                         budget,
                         expected_users,
                         storage_type,
@@ -630,7 +709,11 @@ def show_dashboard():
             return
 
         project_options = {
-            f"{project['id']} - {project['project_name']}": project["id"]
+            (
+                f"{project['id']} - {project['project_name']} "
+                f"({project.get('main_service_type', 'Unknown')} - "
+                f"{project.get('optimization_goal', 'Best QoS')})"
+            ): project["id"]
             for project in projects
         }
 
