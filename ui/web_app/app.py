@@ -7,7 +7,7 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_PATH = BASE_DIR / "data" / "Processed_MultiCloud.csv"
+DATA_PATH = BASE_DIR / "Processed_MultiCloud.csv"
 DB_PATH = Path(__file__).resolve().parent / "cloud_web_multicloud.db"
 
 
